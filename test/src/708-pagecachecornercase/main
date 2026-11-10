@@ -4,22 +4,13 @@ cvmfs_test_autofs_on_startup=false
 cvmfs_test_suites="quick"
 
 CVMFS_TEST_708_MOUNTPOINT=""
-CVMFS_TEST_708_PID_HELPER=
 cleanup() {
   echo "running cleanup()"
+  cvmfs_abort_openwaitprint_jobs
 
-  if [ ! -z $CVMFS_TEST_708_MOUNTPOINT ]; then
-    echo "resume" > ${CVMFS_TEST_708_MOUNTPOINT}c/barrier01
-  fi
-
-  if [ ! -z $CVMFS_TEST_708_PID_HELPER ]; then
-    kill -USR1 $CVMFS_TEST_708_PID_HELPER
-    wait $CVMFS_TEST_708_PID_HELPER
-  fi
-
-  if [ ! -z $CVMFS_TEST_708_MOUNTPOINT ]; then
-    sudo umount $CVMFS_TEST_708_MOUNTPOINT
-    rmdir $CVMFS_TEST_708_MOUNTPOINT
+  if [ -n "$CVMFS_TEST_708_MOUNTPOINT" ]; then
+    sudo umount "$CVMFS_TEST_708_MOUNTPOINT" || return 1
+    rmdir "$CVMFS_TEST_708_MOUNTPOINT" || return 1
   fi
 }
 
@@ -63,14 +54,14 @@ cvmfs_run_test() {
                  "$CVMFS_TEST_REPO" \
                  "$(get_repo_url $CVMFS_TEST_REPO)" \
                  "" \
-                 "CVMFS_DEBUGLOG=$(pwd)/debug.log\n_CVMFS_TEST_BARRIER_OPEN_CHUNKED=${CVMFS_TEST_708_MOUNTPOINT}c/barrier01" || return 11
+                 "CVMFS_DEBUGLOG=$(pwd)/debug.log" || return 11
 
   echo "*** keep a file open with the old content"
   gcc -Wall -pthread -o openwaitprint ${src_location}/openwaitprint.c || return 20
-  echo "pause" > ${CVMFS_TEST_708_MOUNTPOINT}c/barrier01 || return 21
-  ./openwaitprint ${CVMFS_TEST_708_MOUNTPOINT}/foo > foo.old &
-  CVMFS_TEST_708_PID_HELPER=$!
-  echo "*** PID of openwaitprint is $CVMFS_TEST_708_PID_HELPER"
+  cvmfs_start_openwaitprint "${CVMFS_TEST_708_MOUNTPOINT}/foo" foo.old || return 21
+  local pid_helper=$!
+  cvmfs_wait_openwaitprint "$pid_helper" || return 22
+  echo "*** PID of openwaitprint is $pid_helper"
   local inode_foo=$(get_inode ${CVMFS_TEST_708_MOUNTPOINT}/foo)
   echo "*** inode of /foo: $inode_foo"
 
@@ -87,10 +78,6 @@ cvmfs_run_test() {
   # Not true anymore since fixed
   # [ $inode_foo -eq $(get_inode ${CVMFS_TEST_708_MOUNTPOINT}/foo) ] || return 42
 
-  echo "resume" > ${CVMFS_TEST_708_MOUNTPOINT}c/barrier01 || return 43
-  sleep 2
-  ninsert=$(get_ninsert)
-  echo "*** Number of page cache tracker inserts: $ninsert"
   [ $ninsert -eq 1 ] || return 44
 
   echo -n "*** break reading... "
@@ -112,8 +99,8 @@ cvmfs_run_test() {
   # Not true anymore since fixed
   # [ $ndirect -eq 1 ] || return 53
 
-  cleanup
-  CVMFS_TEST_708_PID_HELPER=
+  cvmfs_finish_openwaitprint "$pid_helper" || return 54
+  cleanup || return 55
   local mntpnt=$CVMFS_TEST_708_MOUNTPOINT
   CVMFS_TEST_708_MOUNTPOINT=
 
